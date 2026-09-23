@@ -4,7 +4,7 @@
  import { request,message } from './api';
  import type { HostState,QuizEvent } from './types';
  let {id}:{id:string}=$props();
- let signedIn=$state<boolean|null>(null),events=$state<QuizEvent[]>([]),title=$state('みんなで ○×クイズ'),quiz=$state<HostState|null>(null),tab=$state<'live'|'qr'>('live'),error=$state(''),notice=$state(''),busy=$state(false),qr=$state(''),confirmClose=$state(false),polling=false;
+ let events=$state<QuizEvent[]>([]),title=$state('みんなで ○×クイズ'),quiz=$state<HostState|null>(null),tab=$state<'live'|'qr'>('live'),error=$state(''),notice=$state(''),busy=$state(false),qr=$state(''),confirmClose=$state(false),polling=false;
  const invite=$derived(typeof location!=='undefined'?`${location.origin}/?e=${id}`:'');
  let closeDialog=$state<HTMLDialogElement>();
  $effect(()=>{if(confirmClose)closeDialog?.showModal();else closeDialog?.close()});
@@ -13,17 +13,15 @@
  async function create(){busy=true;error='';try{const event=await request<{id:string}>('/api/events',{title});location.href='/host?e='+event.id}catch(e){error=message(e)}finally{busy=false}}
  async function control(command:string){if(!quiz)return;busy=true;error='';notice='';confirmClose=false;try{await request(`/api/events/${id}/control`,{command,current:quiz.event.current});await refresh();tab='live'}catch(e){error=message(e);await refresh()}finally{busy=false}}
  async function copy(){try{await navigator.clipboard.writeText(invite);notice='参加URLをコピーしました。'}catch{error='コピーできませんでした。表示されているURLを選択してコピーしてください。'}}
- onMount(()=>{void(async()=>{try{const me=await request<{signedIn:boolean}>('/api/me');signedIn=me.signedIn;if(signedIn)await refresh();if(id)qr=await QRCode.toDataURL(invite,{width:440,margin:2,color:{dark:'#172c48',light:'#ffffff'},errorCorrectionLevel:'M'})}catch(e){error=message(e)}})();const timer=setInterval(()=>{if(id&&signedIn&&!busy&&!document.hidden)void refresh()},2500);return()=>clearInterval(timer)});
+ onMount(()=>{void(async()=>{try{await refresh();if(id)qr=await QRCode.toDataURL(invite,{width:440,margin:2,color:{dark:'#172c48',light:'#ffffff'},errorCorrectionLevel:'M'})}catch(e){error=message(e)}})();const timer=setInterval(()=>{if(id&&!busy&&!document.hidden)void refresh()},2500);return()=>clearInterval(timer)});
 </script>
 <main class="host-main">
  <div class="host-breadcrumb"><a href="/host">司会者画面</a>{#if id}<span>/</span><span>イベント管理</span>{/if}<span class="private-badge">司会者のみ</span></div>
  {#if error}<p class="error" role="alert">{error} <button class="inline-button" onclick={()=>{error='';void refresh()}}>再読み込み</button></p>{/if}
  {#if notice}<p class="success" role="status">{notice}</p>{/if}
- {#if signedIn===null}<div class="loading">読み込み中…</div>
- {:else if !signedIn}<section class="card login-card"><span class="section-kicker">司会者専用</span><h1>クイズを準備する</h1><p class="muted">ログインした司会者だけが、イベントの進行と<br/>グループの回答・集計を確認できます。</p><a class="primary" href={'/signin-with-chatgpt?return_to='+encodeURIComponent('/host'+(id?'?e='+id:''))} target="_top">ChatGPTでログイン</a></section>
- {:else if !id}
+ {#if !id}
   <div class="page-heading"><div><div class="eyebrow">HOST CONSOLE</div><h1>クイズの準備をはじめましょう</h1><p class="muted">イベントを作成して、参加用のQRコードを配布できます。</p></div></div>
-  <div class="host-home-grid"><section class="card"><div class="section-kicker">新しいイベント</div><h2>イベントを作成する</h2><form onsubmit={(e)=>{e.preventDefault();void create()}}><label for="event-title">イベント名</label><input id="event-title" bind:value={title} maxlength="80" required/><button class="primary" disabled={busy||!title.trim()}>{busy?'作成中…':'イベントを作成'} <span>→</span></button></form><div class="category-list"><div><b>01—02</b><span>狂言</span><small>2問</small></div><div><b>03—04</b><span>伝統工芸</span><small>2問</small></div><div><b>05—10</b><span>雑学・学校</span><small>6問</small></div></div></section>
+  <div class="host-home-grid"><section class="card"><div class="section-kicker">新しいイベント</div><h2>イベントを作成する</h2><form onsubmit={(e)=>{e.preventDefault();void create()}}><label for="event-title">イベント名</label><input id="event-title" bind:value={title} maxlength="80" required/><button class="primary" disabled={busy||!title.trim()}>{busy?'作成中…':'イベントを作成'} <span>→</span></button></form><p class="notice">司会者の権限は、このブラウザに1年間保存されます。イベント終了まで同じ端末とブラウザを使用してください。</p><div class="category-list"><div><b>01—02</b><span>狂言</span><small>2問</small></div><div><b>03—04</b><span>伝統工芸</span><small>2問</small></div><div><b>05—10</b><span>雑学・学校</span><small>6問</small></div></div></section>
   <section class="card"><div class="section-kicker">作成済みのイベント</div><h2>イベントを開く</h2>{#if events.length===0}<div class="empty-state">まだイベントはありません。<br/>左のフォームから作成してください。</div>{:else}<div class="event-list">{#each events as event}<a href={'/host?e='+event.id}><strong>{event.title}</strong><span>{labels[event.phase]}　→</span></a>{/each}</div>{/if}</section></div>
  {:else if quiz}
   <div class="page-heading"><div><div class="eyebrow">HOST CONSOLE</div><h1>{quiz.event.title}</h1></div><span class="pill phase" class:is-open={quiz.event.phase==='open'}>{labels[quiz.event.phase]}</span></div>

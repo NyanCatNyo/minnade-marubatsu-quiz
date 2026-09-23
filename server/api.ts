@@ -9,7 +9,8 @@ const publicEvent=({owner,...event}:Event)=>event;
 const category=(n:number)=>n<=2?'狂言':n<=4?'伝統工芸':'雑学・学校';
 const correctChoices=['x','x','x','x','o','o','x','x','o','x'] as const;
 const hash=async(token:string)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(token)))).map(x=>x.toString(16).padStart(2,'0')).join('');
-function user(req:Request){return req.headers.get('oai-authenticated-user-id') || fail(401,'司会者はログインしてください。')}
+function cookie(req:Request,name:string){return req.headers.get('cookie')?.split(';').map(value=>value.trim()).find(value=>value.startsWith(`${name}=`))?.slice(name.length+1)??null}
+async function isHost(req:Request,event:Event){const legacyUser=req.headers.get('oai-authenticated-user-id');if(legacyUser&&event.owner===legacyUser)return true;if(!event.owner.startsWith('token:'))return false;const token=cookie(req,`hq_${event.id}`);return !!token&&event.owner===`token:${await hash(token)}`}
 async function body(req:Request){const raw=await req.text();if(raw.length>20000)fail(413,'入力内容が長すぎます。');try{const parsed=JSON.parse(raw);if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))throw new Error('Invalid body');return parsed}catch{fail(400,'入力内容を確認してください。')}}
 function clean(value:unknown,min:number,max:number){if(typeof value!=='string')fail(400,'入力内容を確認してください。'); const s=(value as string).normalize('NFKC').trim();if(s.length<min||s.length>max)fail(400,`${min}〜${max}文字で入力してください。`);return s;}
 async function groupFor(req:Request,db:Database,event:string){const token=req.headers.get('cookie')?.split(';').map(x=>x.trim()).find(x=>x.startsWith(`mq_${event}=`))?.split('=')[1];if(!token)return null;return db.prepare('SELECT id, name FROM groups WHERE event_id = ? AND token_hash = ?').bind(event,await hash(token)).first<{id:string;name:string}>()}
@@ -19,12 +20,17 @@ export async function api(req:Request,env:Env):Promise<Response>{
   if(method!=='GET' && (req.headers.get('sec-fetch-site')==='cross-site'||(req.headers.get('origin')&&req.headers.get('origin')!==url.origin)))fail(403,'この画面からもう一度操作してください。');
   if(path==='/api/me'&&method==='GET')return json({signedIn:!!req.headers.get('oai-authenticated-user-id')});
   if(path==='/api/events'){
-   const owner=user(req);
-   if(method==='GET')return json((await db.prepare('SELECT id,title,phase,current,created FROM events WHERE owner = ? ORDER BY created DESC').bind(owner).all()).results);
+   if(method==='GET'){
+    const found=new Map<string,Record<string,unknown>>(),legacyUser=req.headers.get('oai-authenticated-user-id');
+    if(legacyUser)for(const event of (await db.prepare('SELECT id,title,phase,current,created FROM events WHERE owner = ? ORDER BY created DESC').bind(legacyUser).all()).results)found.set(String(event.id),event);
+    const hostCookies=(req.headers.get('cookie')??'').split(';').map(value=>value.trim()).filter(value=>/^hq_[a-f0-9]{16}=/.test(value)).slice(0,20);
+    for(const value of hostCookies){const separator=value.indexOf('='),id=value.slice(3,separator),token=value.slice(separator+1);const event=await db.prepare('SELECT id,title,phase,current,created FROM events WHERE id = ? AND owner = ?').bind(id,`token:${await hash(token)}`).first<Record<string,unknown>>();if(event)found.set(id,event)}
+    return json([...found.values()].sort((a,b)=>Number(b.created)-Number(a.created)));
+   }
    if(method==='POST'){
-    const input=await body(req), title=clean(input.title,1,80), id=crypto.randomUUID().replaceAll('-','').slice(0,16);
-    await db.batch([db.prepare('INSERT INTO events (id,owner,title,phase,current,created) VALUES (?,?,?,\'setup\',0,?)').bind(id,owner,title,Date.now()),...Array.from({length:10},(_,i)=>db.prepare('INSERT INTO questions (event_id,number,category,body) VALUES (?,?,?,?)').bind(id,i+1,category(i+1),''))]);
-    return json({id},201);
+    const input=await body(req),title=clean(input.title,1,80),id=crypto.randomUUID().replaceAll('-','').slice(0,16),token=crypto.randomUUID()+crypto.randomUUID();
+    await db.batch([db.prepare('INSERT INTO events (id,owner,title,phase,current,created) VALUES (?,?,?,\'setup\',0,?)').bind(id,`token:${await hash(token)}`,title,Date.now()),...Array.from({length:10},(_,i)=>db.prepare('INSERT INTO questions (event_id,number,category,body) VALUES (?,?,?,?)').bind(id,i+1,category(i+1),''))]);
+    return json({id},201,{'Set-Cookie':`hq_${id}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000${url.protocol==='https:'?'; Secure':''}`});
    }
   }
   const match=path.match(/^\/api\/events\/([a-f0-9]{16})\/(state|join|answer|host|control)$/);
@@ -32,7 +38,7 @@ export async function api(req:Request,env:Env):Promise<Response>{
   const [,id,action]=match!,event=await db.prepare('SELECT * FROM events WHERE id = ?').bind(id).first<Event>();
   if(!event)fail(404,'参加コードを確認してください。');
   const ev=event!;
-  if(['host','control'].includes(action)&&ev.owner!==user(req))fail(403,'このイベントの司会者のみ操作できます。');
+  if(['host','control'].includes(action)&&!await isHost(req,ev))fail(403,'このイベントを作成した端末だけが司会者画面を操作できます。');
   if(action==='state'&&method==='GET'){
    const group=await groupFor(req,db,id);
    const question=ev.current?await db.prepare('SELECT number,category FROM questions WHERE event_id = ? AND number = ?').bind(id,ev.current).first():null;
