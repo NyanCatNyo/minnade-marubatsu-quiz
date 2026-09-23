@@ -7,6 +7,7 @@ const fail=(code:number,msg:string):never=>{throw new HttpError(code,msg)};
 const json=(value:unknown,status=200,headers:Record<string,string>={})=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'private, no-store',...headers}});
 const publicEvent=({owner,...event}:Event)=>event;
 const category=(n:number)=>n<=2?'狂言':n<=4?'伝統工芸':'雑学・学校';
+const correctChoices=['x','x','x','x','o','o','x','x','o','x'] as const;
 const hash=async(token:string)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(token)))).map(x=>x.toString(16).padStart(2,'0')).join('');
 function user(req:Request){return req.headers.get('oai-authenticated-user-id') || fail(401,'司会者はログインしてください。')}
 async function body(req:Request){const raw=await req.text();if(raw.length>20000)fail(413,'入力内容が長すぎます。');try{const parsed=JSON.parse(raw);if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))throw new Error('Invalid body');return parsed}catch{fail(400,'入力内容を確認してください。')}}
@@ -56,7 +57,14 @@ export async function api(req:Request,env:Env):Promise<Response>{
   if(action==='host'&&method==='GET'){
    const questions=(await db.prepare('SELECT number,category FROM questions WHERE event_id = ? ORDER BY number').bind(id).all()).results;
    const groups=(await db.prepare('SELECT g.id,g.name,a.choice FROM groups g LEFT JOIN answers a ON a.group_id = g.id AND a.number = ? WHERE g.event_id = ? ORDER BY g.created').bind(ev.current,id).all<{id:string;name:string;choice:string|null}>()).results;
-   return json({event:publicEvent(ev),questions,groups,totals:{o:groups.filter(g=>g.choice==='o').length,x:groups.filter(g=>g.choice==='x').length,pending:groups.filter(g=>!g.choice).length}});
+   const scores=new Map<string,number>();
+   if(ev.phase==='finished'){
+    const submitted=(await db.prepare('SELECT a.group_id,a.number,a.choice FROM answers a JOIN groups g ON g.id = a.group_id WHERE g.event_id = ?').bind(id).all<{group_id:string;number:number;choice:string}>()).results;
+    for(const answer of submitted)if(correctChoices[answer.number-1]===answer.choice)scores.set(answer.group_id,(scores.get(answer.group_id)??0)+1);
+   }
+   const scoredGroups=groups.map(group=>({...group,correctCount:ev.phase==='finished'?(scores.get(group.id)??0):null}));
+   if(ev.phase==='finished')scoredGroups.sort((a,b)=>(b.correctCount??0)-(a.correctCount??0)||a.name.localeCompare(b.name,'ja'));
+   return json({event:publicEvent(ev),questions,groups:scoredGroups,totals:{o:groups.filter(g=>g.choice==='o').length,x:groups.filter(g=>g.choice==='x').length,pending:groups.filter(g=>!g.choice).length}});
   }
   if(action==='control'&&method==='POST'){
    const {command,current}=await body(req);if(current!==ev.current)fail(409,'進行状況が変わりました。画面を更新してください。');
