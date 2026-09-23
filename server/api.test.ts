@@ -58,7 +58,10 @@ test('ten questions, immutable answers, retries, closure, next question and fini
   assert.equal((await call(p + '/answer', { number: 1, choice: 'o' }, undefined, a.cookie)).status, 409);
   assert.equal((await call(p + '/control', { command: 'start', current: 0 }, undefined, hostCookie)).status, 200);
   assert.equal((await call(p + '/state')).body.question.number, 1);
-  assert.equal((await call(p + '/host', undefined, undefined, hostCookie)).body.questions[0].body, undefined);
+  assert.equal((await call(p + '/state')).body.question.category, undefined);
+  const hostQuestion = (await call(p + '/host', undefined, undefined, hostCookie)).body.questions[0];
+  assert.equal(hostQuestion.body, undefined);
+  assert.equal(hostQuestion.category, undefined);
   const results = await Promise.all(['o', 'x'].map(choice => call(p + '/answer', { number: 1, choice }, undefined, a.cookie)));
   assert.deepEqual(results.map(result => result.status).sort(), [200, 409]);
   const saved = (await call(p + '/state', undefined, undefined, a.cookie)).body.answer;

@@ -6,7 +6,6 @@ class HttpError extends Error {constructor(public status:number,message:string){
 const fail=(code:number,msg:string):never=>{throw new HttpError(code,msg)};
 const json=(value:unknown,status=200,headers:Record<string,string>={})=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'private, no-store',...headers}});
 const publicEvent=({owner,...event}:Event)=>event;
-const category=(n:number)=>n<=2?'狂言':n<=4?'伝統工芸':'雑学・学校';
 const correctChoices=['x','x','x','x','o','o','x','x','o','x'] as const;
 const hash=async(token:string)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(token)))).map(x=>x.toString(16).padStart(2,'0')).join('');
 function cookie(req:Request,name:string){return req.headers.get('cookie')?.split(';').map(value=>value.trim()).find(value=>value.startsWith(`${name}=`))?.slice(name.length+1)??null}
@@ -29,7 +28,7 @@ export async function api(req:Request,env:Env):Promise<Response>{
    }
    if(method==='POST'){
     const input=await body(req),title=clean(input.title,1,80),id=crypto.randomUUID().replaceAll('-','').slice(0,16),token=crypto.randomUUID()+crypto.randomUUID();
-    await db.batch([db.prepare('INSERT INTO events (id,owner,title,phase,current,created) VALUES (?,?,?,\'setup\',0,?)').bind(id,`token:${await hash(token)}`,title,Date.now()),...Array.from({length:10},(_,i)=>db.prepare('INSERT INTO questions (event_id,number,category,body) VALUES (?,?,?,?)').bind(id,i+1,category(i+1),''))]);
+    await db.batch([db.prepare('INSERT INTO events (id,owner,title,phase,current,created) VALUES (?,?,?,\'setup\',0,?)').bind(id,`token:${await hash(token)}`,title,Date.now()),...Array.from({length:10},(_,i)=>db.prepare('INSERT INTO questions (event_id,number,category,body) VALUES (?,?,?,?)').bind(id,i+1,'',''))]);
     return json({id},201,{'Set-Cookie':`hq_${id}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000${url.protocol==='https:'?'; Secure':''}`});
    }
   }
@@ -41,7 +40,7 @@ export async function api(req:Request,env:Env):Promise<Response>{
   if(['host','control'].includes(action)&&!await isHost(req,ev))fail(403,'このイベントを作成した端末だけが司会者画面を操作できます。');
   if(action==='state'&&method==='GET'){
    const group=await groupFor(req,db,id);
-   const question=ev.current?await db.prepare('SELECT number,category FROM questions WHERE event_id = ? AND number = ?').bind(id,ev.current).first():null;
+   const question=ev.current?await db.prepare('SELECT number FROM questions WHERE event_id = ? AND number = ?').bind(id,ev.current).first():null;
    const answer=group?await db.prepare('SELECT choice FROM answers WHERE group_id = ? AND number = ?').bind(group.id,ev.current).first<{choice:string}>():null;
    return json({event:publicEvent(ev),question,group,answer:answer?.choice??null});
   }
@@ -61,7 +60,7 @@ export async function api(req:Request,env:Env):Promise<Response>{
    if(!saved)fail(409,'回答は締め切られました。');if(saved!.choice!==choice)fail(409,'すでに決定済みです。回答は変更できません。');return json({choice:saved!.choice});
   }
   if(action==='host'&&method==='GET'){
-   const questions=(await db.prepare('SELECT number,category FROM questions WHERE event_id = ? ORDER BY number').bind(id).all()).results;
+   const questions=(await db.prepare('SELECT number FROM questions WHERE event_id = ? ORDER BY number').bind(id).all()).results;
    const groups=(await db.prepare('SELECT g.id,g.name,a.choice FROM groups g LEFT JOIN answers a ON a.group_id = g.id AND a.number = ? WHERE g.event_id = ? ORDER BY g.created').bind(ev.current,id).all<{id:string;name:string;choice:string|null}>()).results;
    const scores=new Map<string,number>();
    if(ev.phase==='finished'){
