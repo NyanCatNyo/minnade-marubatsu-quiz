@@ -4,25 +4,26 @@
  import { request,message } from './api';
  import type { HostState,QuizEvent } from './types';
  let {id}:{id:string}=$props();
+ const appBase=import.meta.env.BASE_URL,hostHome=appBase+'?host=1';
  let events=$state<QuizEvent[]>([]),title=$state('みんなで ○×クイズ'),quiz=$state<HostState|null>(null),tab=$state<'live'|'qr'>('live'),error=$state(''),notice=$state(''),busy=$state(false),qr=$state(''),confirmClose=$state(false),polling=false;
- const invite=$derived(typeof location!=='undefined'?`${location.origin}/?e=${id}`:'');
+ const invite=$derived(typeof location!=='undefined'?`${location.origin}${appBase}?e=${id}`:'');
  let closeDialog=$state<HTMLDialogElement>();
  $effect(()=>{if(confirmClose)closeDialog?.showModal();else closeDialog?.close()});
  const labels:Record<string,string>={setup:'開始前',open:'回答受付中',closed:'回答締め切り',finished:'終了'};
  async function refresh(){if(polling)return;polling=true;try{if(id){quiz=await request<HostState>(`/api/events/${id}/host`);}else events=await request<QuizEvent[]>('/api/events');}catch(e){error=message(e)}finally{polling=false}}
- async function create(){busy=true;error='';try{const event=await request<{id:string}>('/api/events',{title});location.href='/host?e='+event.id}catch(e){error=message(e)}finally{busy=false}}
+ async function create(){busy=true;error='';try{const event=await request<{id:string}>('/api/events',{title});location.href=hostHome+'&e='+event.id}catch(e){error=message(e)}finally{busy=false}}
  async function control(command:string){if(!quiz)return;busy=true;error='';notice='';confirmClose=false;try{await request(`/api/events/${id}/control`,{command,current:quiz.event.current});await refresh();tab='live'}catch(e){error=message(e);await refresh()}finally{busy=false}}
  function rankAt(index:number){if(!quiz)return index+1;const score=quiz.groups[index]?.correctCount;return quiz.groups.findIndex(group=>group.correctCount===score)+1}
  async function copy(){try{await navigator.clipboard.writeText(invite);notice='参加URLをコピーしました。'}catch{error='コピーできませんでした。表示されているURLを選択してコピーしてください。'}}
  onMount(()=>{void(async()=>{try{await refresh();if(id)qr=await QRCode.toDataURL(invite,{width:440,margin:2,color:{dark:'#172c48',light:'#ffffff'},errorCorrectionLevel:'M'})}catch(e){error=message(e)}})();const timer=setInterval(()=>{if(id&&!busy&&!document.hidden)void refresh()},2500);return()=>clearInterval(timer)});
 </script>
 <main class="host-main">
- <div class="host-breadcrumb"><a href="/host">司会者画面</a>{#if id}<span>/</span><span>イベント管理</span>{/if}<span class="private-badge">司会者のみ</span></div>
+ <div class="host-breadcrumb"><a href={hostHome}>司会者画面</a>{#if id}<span>/</span><span>イベント管理</span>{/if}<span class="private-badge">司会者のみ</span></div>
  {#if error}<p class="error" role="alert">{error} <button class="inline-button" onclick={()=>{error='';void refresh()}}>再読み込み</button></p>{/if}
  {#if notice}<p class="success" role="status">{notice}</p>{/if}
  {#if !id}
   <div class="host-home-grid"><section class="card"><div class="section-kicker">新しいイベント</div><h2>イベントを作成する</h2><form onsubmit={(e)=>{e.preventDefault();void create()}}><label for="event-title">イベント名</label><input id="event-title" bind:value={title} maxlength="80" required/><button class="primary" disabled={busy||!title.trim()}>{busy?'作成中…':'イベントを作成'} <span>→</span></button></form></section>
-  <section class="card"><div class="section-kicker">作成済みのイベント</div><h2>イベントを開く</h2>{#if events.length===0}<div class="empty-state">まだイベントはありません。<br/>左のフォームから作成してください。</div>{:else}<div class="event-list">{#each events as event}<a href={'/host?e='+event.id}><strong>{event.title}</strong><span>{labels[event.phase]}　→</span></a>{/each}</div>{/if}</section></div>
+  <section class="card"><div class="section-kicker">作成済みのイベント</div><h2>イベントを開く</h2>{#if events.length===0}<div class="empty-state">まだイベントはありません。<br/>左のフォームから作成してください。</div>{:else}<div class="event-list">{#each events as event}<a href={hostHome+'&e='+event.id}><strong>{event.title}</strong><span>{labels[event.phase]}　→</span></a>{/each}</div>{/if}</section></div>
  {:else if quiz}
   <div class="page-heading"><div><div class="eyebrow">HOST CONSOLE</div><h1>{quiz.event.title}</h1></div><span class="pill phase" class:is-open={quiz.event.phase==='open'}>{labels[quiz.event.phase]}</span></div>
   <nav class="tabs" aria-label="イベント管理"><button class:active={tab==='live'} onclick={()=>tab='live'}>進行と集計</button><button class:active={tab==='qr'} onclick={()=>tab='qr'}>参加用QRコード</button></nav>

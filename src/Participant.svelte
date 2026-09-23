@@ -3,6 +3,7 @@
  import { request,message } from './api';
  import type { State,Choice } from './types';
  let {id}:{id:string}=$props();
+ const appBase=import.meta.env.BASE_URL;
  let quiz=$state<State|null>(null), name=$state(''),selected=$state<Choice|null>(null),error=$state(''),busy=$state(false),syncing=false,seen=-1;
  async function refresh(){if(syncing)return;syncing=true;try{const next=await request<State>(`/api/events/${id}/state`);if(next.event.current!==seen){selected=null;seen=next.event.current}quiz=next;if(next.answer)selected=next.answer;error=''}catch(e){error=message(e)}finally{syncing=false}}
  async function join(){busy=true;error='';try{await request(`/api/events/${id}/join`,{name});await refresh()}catch(e){error=message(e)}finally{busy=false}}
@@ -10,7 +11,7 @@
  onMount(()=>{void refresh();const interval=setInterval(()=>{if(!document.hidden&&!busy)void refresh()},2000);return()=>clearInterval(interval)});
 </script>
 <main class="participant">
- {#if !quiz}<div class="card"><h1>{error?'参加できませんでした':'参加画面を読み込み中…'}</h1>{#if error}<p class="error" role="alert">{error}</p><button class="secondary" onclick={refresh}>再読み込み</button><a class="text-link" href="/">参加コードを入力する</a>{/if}</div>
+ {#if !quiz}<div class="card"><h1>{error?'参加できませんでした':'参加画面を読み込み中…'}</h1>{#if error}<p class="error" role="alert">{error}</p><button class="secondary" onclick={refresh}>再読み込み</button><a class="text-link" href={appBase}>参加コードを入力する</a>{/if}</div>
  {:else}
   {#if !quiz.group}
    <section class="card registration"><h2>グループ名を教えてください</h2><p class="muted">代表者1名が登録してください。<br/>この端末でグループの回答を送信します。</p>

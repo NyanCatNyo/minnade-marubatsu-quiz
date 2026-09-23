@@ -9,14 +9,14 @@ const publicEvent=({owner,...event}:Event)=>event;
 const correctChoices=['x','x','x','x','o','o','x','x','o','x'] as const;
 const hash=async(token:string)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(token)))).map(x=>x.toString(16).padStart(2,'0')).join('');
 function cookie(req:Request,name:string){return req.headers.get('cookie')?.split(';').map(value=>value.trim()).find(value=>value.startsWith(`${name}=`))?.slice(name.length+1)??null}
-async function isHost(req:Request,event:Event){const legacyUser=req.headers.get('oai-authenticated-user-id');if(legacyUser&&event.owner===legacyUser)return true;if(!event.owner.startsWith('token:'))return false;const token=cookie(req,`hq_${event.id}`);return !!token&&event.owner===`token:${await hash(token)}`}
+async function isHost(req:Request,event:Event){const legacyUser=req.headers.get('oai-authenticated-user-id');if(legacyUser&&event.owner===legacyUser)return true;if(!event.owner.startsWith('token:'))return false;const token=req.headers.get('x-quiz-host-token')??cookie(req,`hq_${event.id}`);return !!token&&event.owner===`token:${await hash(token)}`}
 async function body(req:Request){const raw=await req.text();if(raw.length>20000)fail(413,'入力内容が長すぎます。');try{const parsed=JSON.parse(raw);if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))throw new Error('Invalid body');return parsed}catch{fail(400,'入力内容を確認してください。')}}
 function clean(value:unknown,min:number,max:number){if(typeof value!=='string')fail(400,'入力内容を確認してください。'); const s=(value as string).normalize('NFKC').trim();if(s.length<min||s.length>max)fail(400,`${min}〜${max}文字で入力してください。`);return s;}
-async function groupFor(req:Request,db:Database,event:string){const token=req.headers.get('cookie')?.split(';').map(x=>x.trim()).find(x=>x.startsWith(`mq_${event}=`))?.split('=')[1];if(!token)return null;return db.prepare('SELECT id, name FROM groups WHERE event_id = ? AND token_hash = ?').bind(event,await hash(token)).first<{id:string;name:string}>()}
-export async function api(req:Request,env:Env):Promise<Response>{
+async function groupFor(req:Request,db:Database,event:string){const token=req.headers.get('x-quiz-group-token')??req.headers.get('cookie')?.split(';').map(x=>x.trim()).find(x=>x.startsWith(`mq_${event}=`))?.split('=')[1];if(!token)return null;return db.prepare('SELECT id, name FROM groups WHERE event_id = ? AND token_hash = ?').bind(event,await hash(token)).first<{id:string;name:string}>()}
+async function handleApi(req:Request,env:Env):Promise<Response>{
  try {
   const url=new URL(req.url), path=url.pathname, method=req.method, db=env.DB;
-  if(method!=='GET' && (req.headers.get('sec-fetch-site')==='cross-site'||(req.headers.get('origin')&&req.headers.get('origin')!==url.origin)))fail(403,'この画面からもう一度操作してください。');
+  if(method!=='GET'&&req.headers.get('origin')&&req.headers.get('origin')!==url.origin&&req.headers.get('origin')!=='https://nyancatnyo.github.io')fail(403,'この画面からもう一度操作してください。');
   if(path==='/api/me'&&method==='GET')return json({signedIn:!!req.headers.get('oai-authenticated-user-id')});
   if(path==='/api/events'){
    if(method==='GET'){
@@ -24,12 +24,13 @@ export async function api(req:Request,env:Env):Promise<Response>{
     if(legacyUser)for(const event of (await db.prepare('SELECT id,title,phase,current,created FROM events WHERE owner = ? ORDER BY created DESC').bind(legacyUser).all()).results)found.set(String(event.id),event);
     const hostCookies=(req.headers.get('cookie')??'').split(';').map(value=>value.trim()).filter(value=>/^hq_[a-f0-9]{16}=/.test(value)).slice(0,20);
     for(const value of hostCookies){const separator=value.indexOf('='),id=value.slice(3,separator),token=value.slice(separator+1);const event=await db.prepare('SELECT id,title,phase,current,created FROM events WHERE id = ? AND owner = ?').bind(id,`token:${await hash(token)}`).first<Record<string,unknown>>();if(event)found.set(id,event)}
+    for(const value of (req.headers.get('x-quiz-host-tokens')??'').split(',').filter(Boolean).slice(0,20)){const separator=value.indexOf(':'),id=value.slice(0,separator),token=value.slice(separator+1);if(!/^[a-f0-9]{16}$/.test(id)||!token)continue;const event=await db.prepare('SELECT id,title,phase,current,created FROM events WHERE id = ? AND owner = ?').bind(id,`token:${await hash(token)}`).first<Record<string,unknown>>();if(event)found.set(id,event)}
     return json([...found.values()].sort((a,b)=>Number(b.created)-Number(a.created)));
    }
    if(method==='POST'){
     const input=await body(req),title=clean(input.title,1,80),id=crypto.randomUUID().replaceAll('-','').slice(0,16),token=crypto.randomUUID()+crypto.randomUUID();
     await db.batch([db.prepare('INSERT INTO events (id,owner,title,phase,current,created) VALUES (?,?,?,\'setup\',0,?)').bind(id,`token:${await hash(token)}`,title,Date.now()),...Array.from({length:10},(_,i)=>db.prepare('INSERT INTO questions (event_id,number,category,body) VALUES (?,?,?,?)').bind(id,i+1,'',''))]);
-    return json({id},201,{'Set-Cookie':`hq_${id}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000${url.protocol==='https:'?'; Secure':''}`});
+    return json({id,hostToken:token},201,{'Set-Cookie':`hq_${id}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000${url.protocol==='https:'?'; Secure':''}`});
    }
   }
   const match=path.match(/^\/api\/events\/([a-f0-9]{16})\/(state|join|answer|host|control)$/);
@@ -50,7 +51,7 @@ export async function api(req:Request,env:Env):Promise<Response>{
    const input=await body(req),name=clean(input.name,1,30),gid=crypto.randomUUID(),token=crypto.randomUUID()+crypto.randomUUID();
    try{await db.prepare('INSERT INTO groups (id,event_id,name,token_hash,created) SELECT ?,?,?,?,? WHERE EXISTS (SELECT 1 FROM events WHERE id = ? AND phase != \'finished\')').bind(gid,id,name,await hash(token),Date.now(),id).run()}catch(e){if(String(e).includes('UNIQUE'))fail(409,'このグループ名は登録済みです。代表の方の端末を確認するか、別の名前を入力してください。');throw e}
    const registered=await db.prepare('SELECT id,name FROM groups WHERE id = ?').bind(gid).first();if(!registered)fail(409,'このイベントは終了しました。');
-   return json({group:registered},201,{'Set-Cookie':`mq_${id}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=1209600${url.protocol==='https:'?'; Secure':''}`});
+   return json({group:registered,groupToken:token},201,{'Set-Cookie':`mq_${id}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=1209600${url.protocol==='https:'?'; Secure':''}`});
   }
   if(action==='answer'&&method==='POST'){
    const group=await groupFor(req,db,id);if(!group)fail(401,'グループを登録してください。');
@@ -84,4 +85,10 @@ export async function api(req:Request,env:Env):Promise<Response>{
   }
   return fail(405,'この操作は利用できません。');
  }catch(e){if(e instanceof HttpError)return json({error:e.message},e.status);console.error('Quiz API error',e);return json({error:'通信に失敗しました。入力をそのままにして、もう一度お試しください。'},500)}
+}
+const allowedOrigins=new Set(['https://nyancatnyo.github.io']);
+export async function api(req:Request,env:Env):Promise<Response>{
+ const origin=req.headers.get('origin'),cors=origin&&allowedOrigins.has(origin)?origin:null;
+ if(req.method==='OPTIONS'){if(!cors)return new Response(null,{status:403});return new Response(null,{status:204,headers:{'Access-Control-Allow-Origin':cors,'Access-Control-Allow-Methods':'GET, POST, OPTIONS','Access-Control-Allow-Headers':'Content-Type, X-Quiz-Host-Token, X-Quiz-Group-Token, X-Quiz-Host-Tokens','Access-Control-Max-Age':'86400','Vary':'Origin'}})}
+ const response=await handleApi(req,env);if(!cors)return response;const headers=new Headers(response.headers);headers.set('Access-Control-Allow-Origin',cors);headers.append('Vary','Origin');return new Response(response.body,{status:response.status,statusText:response.statusText,headers})
 }

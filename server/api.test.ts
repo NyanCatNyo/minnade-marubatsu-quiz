@@ -40,6 +40,24 @@ test('event creation is anonymous and host access is protected by its cookie', a
   assert.equal(publicState.body.event.owner, undefined);
 });
 
+test('GitHub Pages origin can use token authentication through CORS', async () => {
+  const DB = localDatabase(true), origin = 'https://nyancatnyo.github.io';
+  const preflight = await api(new Request('https://quiz.test/api/events', { method: 'OPTIONS', headers: { origin, 'access-control-request-method': 'POST' } }), { DB });
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get('access-control-allow-origin'), origin);
+  const created = await api(new Request('https://quiz.test/api/events', { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Pagesイベント' }) }), { DB });
+  const event = await created.json() as any;
+  assert.ok(event.hostToken);
+  const host = await api(new Request(`https://quiz.test/api/events/${event.id}/host`, { headers: { origin, 'x-quiz-host-token': event.hostToken } }), { DB });
+  assert.equal(host.status, 200);
+  assert.equal(host.headers.get('access-control-allow-origin'), origin);
+  const joined = await api(new Request(`https://quiz.test/api/events/${event.id}/join`, { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify({ name: '追手門チーム' }) }), { DB });
+  const participant = await joined.json() as any;
+  assert.ok(participant.groupToken);
+  const state = await api(new Request(`https://quiz.test/api/events/${event.id}/state`, { headers: { origin, 'x-quiz-group-token': participant.groupToken } }), { DB });
+  assert.equal((await state.json() as any).group.name, '追手門チーム');
+});
+
 test('unique normalized group names, existing cookie recovery, forged cookie rejected', async () => {
   const { call, p, id } = await setup();
   const first = await call(p + '/join', { name: 'チームＡ' });
