@@ -12,12 +12,10 @@
 <main class="participant">
  {#if !quiz}<div class="card"><h1>{error?'参加できませんでした':'参加画面を読み込み中…'}</h1>{#if error}<p class="error" role="alert">{error}</p><button class="secondary" onclick={refresh}>再読み込み</button><a class="text-link" href="/">参加コードを入力する</a>{/if}</div>
  {:else}
-  <div class="participant-heading"><div><div class="eyebrow">TEAM QUIZ</div><h1>{quiz.event.title}</h1></div><span class="pill">全10問</span></div>
   {#if !quiz.group}
-   <section class="card registration"><div class="section-kicker">グループで参加</div><h2>グループ名を教えてください</h2><p class="muted">代表者1名が登録してください。<br/>この端末でグループの回答を送信します。</p>
-    {#if quiz.event.phase==='finished'}<div class="notice">このイベントは終了しました。</div>{:else}<form onsubmit={(e)=>{e.preventDefault();void join()}}><label for="group-name">グループ名</label><input id="group-name" bind:value={name} maxlength="30" placeholder="例：さくらチーム" autocomplete="organization" required disabled={busy}/><p class="note">会場で分かる名前を入力してください（30文字以内）。</p>{#if error}<p class="error" role="alert">{error}</p>{/if}<button class="primary" disabled={busy||!name.trim()}>{busy?'登録中…':'このグループで参加する'} <span>→</span></button></form>{/if}
+   <section class="card registration"><h2>グループ名を教えてください</h2><p class="muted">代表者1名が登録してください。<br/>この端末でグループの回答を送信します。</p>
+    {#if quiz.event.phase==='finished'}<div class="notice">このイベントは終了しました。</div>{:else}<form onsubmit={(e)=>{e.preventDefault();void join()}}><label for="group-name">グループ名</label><input id="group-name" bind:value={name} maxlength="30" placeholder="例：追手門チーム" autocomplete="organization" required disabled={busy}/><p class="note">会場で分かる名前を入力してください（30文字以内）。</p>{#if error}<p class="error" role="alert">{error}</p>{/if}<button class="primary" disabled={busy||!name.trim()}>{busy?'登録中…':'このグループで参加する'} <span>→</span></button></form>{/if}
    </section>
-   <p class="participant-help">○×は、みんなで相談してから選びましょう。</p>
   {:else}
    <div class="group-banner"><span>参加グループ</span><strong>{quiz.group.name}</strong><span class="connected">自動更新</span></div>
    {#if error}<p class="error" role="alert">{error} <button class="inline-button" onclick={refresh}>再接続</button></p>{/if}
