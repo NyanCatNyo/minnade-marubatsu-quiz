@@ -30,10 +30,10 @@
       <div class="answer-confirmed" class:answer-x={quiz.answer==='x'}><div class="big-answer" aria-label={quiz.answer==='o'?'まる':'ばつ'}>{quiz.answer==='o'?'○':'×'}</div><strong>この回答で決定しました</strong><p>司会者の合図に合わせて、<br/>グループの「{quiz.answer==='o'?'○':'×'}」の札を上げてください。</p><span class="lock-note">決定済みの回答は変更できません</span></div>
      {:else if quiz.event.phase==='closed'}<div class="waiting"><span class="pill">回答締め切り</span><h2>この問題は締め切られました</h2><p>このグループの回答は未送信です。<br/>次の問題をお待ちください。</p></div>
      {:else}
-      <p class="choice-label">みんなで相談して、○か×を選ぼう</p><div class="choices"><button class="choice circle" class:chosen={selected==='o'} aria-label="○を選ぶ" aria-pressed={selected==='o'} disabled={busy} onclick={()=>selected='o'}><span aria-hidden="true">○</span><small>{selected==='o'?'選択中':'まる'}</small></button><button class="choice cross" class:chosen={selected==='x'} aria-label="×を選ぶ" aria-pressed={selected==='x'} disabled={busy} onclick={()=>selected='x'}><span aria-hidden="true">×</span><small>{selected==='x'?'選択中':'ばつ'}</small></button></div>
+      <div class="choices"><button class="choice circle" class:chosen={selected==='o'} aria-label="○を選ぶ" aria-pressed={selected==='o'} disabled={busy} onclick={()=>selected='o'}><span aria-hidden="true">○</span><small>{selected==='o'?'選択中':'まる'}</small></button><button class="choice cross" class:chosen={selected==='x'} aria-label="×を選ぶ" aria-pressed={selected==='x'} disabled={busy} onclick={()=>selected='x'}><span aria-hidden="true">×</span><small>{selected==='x'?'選択中':'ばつ'}</small></button></div>
       <button class="primary decide" onclick={confirm} disabled={!selected||busy}>{busy?'送信中…':selected?`「${selected==='o'?'○':'×'}」で決定`:'○か×を選んでください'}</button><p class="note centered">「決定」までは選び直せます。決定後は変更できません。</p>
      {/if}
-    </section><p class="participant-help">{quiz.event.phase==='closed'?'次の問題は、司会者の操作で表示されます。':'集計結果は司会者だけに表示されます。'}</p>
+    </section>{#if quiz.event.phase==='closed'}<p class="participant-help">次の問題は、司会者の操作で表示されます。</p>{/if}
    {/if}
   {/if}
  {/if}
