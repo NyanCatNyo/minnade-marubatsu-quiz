@@ -26,15 +26,15 @@ export async function api(req:Request,env:Env):Promise<Response>{
     return json({id},201);
    }
   }
-  const match=path.match(/^\/api\/events\/([a-f0-9]{16})\/(state|join|answer|host|questions|control)$/);
+  const match=path.match(/^\/api\/events\/([a-f0-9]{16})\/(state|join|answer|host|control)$/);
   if(!match)fail(404,'ページが見つかりません。');
   const [,id,action]=match!,event=await db.prepare('SELECT * FROM events WHERE id = ?').bind(id).first<Event>();
   if(!event)fail(404,'参加コードを確認してください。');
   const ev=event!;
-  if(['host','questions','control'].includes(action)&&ev.owner!==user(req))fail(403,'このイベントの司会者のみ操作できます。');
+  if(['host','control'].includes(action)&&ev.owner!==user(req))fail(403,'このイベントの司会者のみ操作できます。');
   if(action==='state'&&method==='GET'){
    const group=await groupFor(req,db,id);
-   const question=ev.current?await db.prepare('SELECT number,category,body FROM questions WHERE event_id = ? AND number = ?').bind(id,ev.current).first():null;
+   const question=ev.current?await db.prepare('SELECT number,category FROM questions WHERE event_id = ? AND number = ?').bind(id,ev.current).first():null;
    const answer=group?await db.prepare('SELECT choice FROM answers WHERE group_id = ? AND number = ?').bind(group.id,ev.current).first<{choice:string}>():null;
    return json({event:publicEvent(ev),question,group,answer:answer?.choice??null});
   }
@@ -54,27 +54,20 @@ export async function api(req:Request,env:Env):Promise<Response>{
    if(!saved)fail(409,'回答は締め切られました。');if(saved!.choice!==choice)fail(409,'すでに決定済みです。回答は変更できません。');return json({choice:saved!.choice});
   }
   if(action==='host'&&method==='GET'){
-   const questions=(await db.prepare('SELECT number,category,body FROM questions WHERE event_id = ? ORDER BY number').bind(id).all()).results;
+   const questions=(await db.prepare('SELECT number,category FROM questions WHERE event_id = ? ORDER BY number').bind(id).all()).results;
    const groups=(await db.prepare('SELECT g.id,g.name,a.choice FROM groups g LEFT JOIN answers a ON a.group_id = g.id AND a.number = ? WHERE g.event_id = ? ORDER BY g.created').bind(ev.current,id).all<{id:string;name:string;choice:string|null}>()).results;
    return json({event:publicEvent(ev),questions,groups,totals:{o:groups.filter(g=>g.choice==='o').length,x:groups.filter(g=>g.choice==='x').length,pending:groups.filter(g=>!g.choice).length}});
-  }
-  if(action==='questions'&&method==='POST'){
-   if(ev.phase!=='setup')fail(409,'開始後は問題を編集できません。');const {questions}=await body(req);
-   if(!Array.isArray(questions)||questions.length!==10)fail(400,'10問すべてを入力してください。');
-   const texts:string[]=(questions as {body:unknown}[]).map(q=>clean(q?.body,0,500));
-   await db.batch(texts.map((text,i)=>db.prepare('UPDATE questions SET body = ? WHERE event_id = ? AND number = ? AND EXISTS (SELECT 1 FROM events WHERE id = ? AND phase = \'setup\')').bind(text,id,i+1,id)));
-   return json({saved:true});
   }
   if(action==='control'&&method==='POST'){
    const {command,current}=await body(req);if(current!==ev.current)fail(409,'進行状況が変わりました。画面を更新してください。');
    let sql='',values:unknown[]=[];
    if(command==='start'){
-    sql="UPDATE events SET phase = 'open', current = 1 WHERE id = ? AND phase = 'setup' AND (SELECT count(*) FROM questions WHERE event_id = ? AND length(trim(body)) > 0) = 10";values=[id,id];
+    sql="UPDATE events SET phase = 'open', current = 1 WHERE id = ? AND phase = 'setup'";values=[id];
    }else if(command==='close'){sql="UPDATE events SET phase = 'closed' WHERE id = ? AND phase = 'open' AND current = ?";values=[id,current];}
    else if(command==='next'){sql="UPDATE events SET phase = 'open', current = current + 1 WHERE id = ? AND phase = 'closed' AND current = ? AND current < 10";values=[id,current];}
    else if(command==='finish'){sql="UPDATE events SET phase = 'finished' WHERE id = ? AND phase = 'closed' AND current = 10";values=[id];}
    else fail(400,'操作を確認してください。');
-   const changed=await db.prepare(sql).bind(...values).run();if(!changed.meta.changes)fail(409,command==='start'?'10問の問題文を保存してから開始してください。':'進行状況が変わりました。画面を更新してください。');return json({ok:true});
+   const changed=await db.prepare(sql).bind(...values).run();if(!changed.meta.changes)fail(409,'進行状況が変わりました。画面を更新してください。');return json({ok:true});
   }
   return fail(405,'この操作は利用できません。');
  }catch(e){if(e instanceof HttpError)return json({error:e.message},e.status);console.error('Quiz API error',e);return json({error:'通信に失敗しました。入力をそのままにして、もう一度お試しください。'},500)}
