@@ -30,12 +30,21 @@ async function handleApi(req:Request,env:Env):Promise<Response>{
     return json({id},201);
    }
   }
-  const match=path.match(/^\/api\/events\/([a-f0-9]{16})\/(state|join|answer|host|control|key)$/);
+  const match=path.match(/^\/api\/events\/([a-f0-9]{16})\/(state|join|answer|host|control|key|delete)$/);
   if(!match)fail(404,'ページが見つかりません。');
   const [,id,action]=match!,event=await db.prepare('SELECT * FROM events WHERE id = ?').bind(id).first<Event>();
   if(!event)fail(404,'参加コードを確認してください。');
   const ev=event!;
-  if(['host','control','key'].includes(action)&&!isHost(req,env))fail(401,'司会者のパスワードを確認してください。');
+  if(['host','control','key','delete'].includes(action)&&!isHost(req,env))fail(401,'司会者のパスワードを確認してください。');
+  if(action==='delete'&&method==='POST'){
+   await db.batch([
+    db.prepare('DELETE FROM answers WHERE group_id IN (SELECT id FROM groups WHERE event_id = ?)').bind(id),
+    db.prepare('DELETE FROM groups WHERE event_id = ?').bind(id),
+    db.prepare('DELETE FROM questions WHERE event_id = ?').bind(id),
+    db.prepare('DELETE FROM events WHERE id = ?').bind(id)
+   ]);
+   return json({ok:true});
+  }
   if(action==='state'&&method==='GET'){
    const group=await groupFor(req,db,id);
    const question=ev.current?await db.prepare('SELECT number FROM questions WHERE event_id = ? AND number = ?').bind(id,ev.current).first():null;

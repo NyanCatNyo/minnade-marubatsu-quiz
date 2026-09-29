@@ -5,14 +5,17 @@
  import type { HostState,QuizEvent,Choice } from './types';
  let {id}:{id:string}=$props();
  const appBase=import.meta.env.BASE_URL,hostHome=appBase+'?host=1';
- let events=$state<QuizEvent[]>([]),title=$state('みんなで ○×クイズ'),questionCount=$state(10),quiz=$state<HostState|null>(null),tab=$state<'live'|'qr'>('live'),error=$state(''),notice=$state(''),busy=$state(false),qr=$state(''),confirmClose=$state(false),polling=false,authenticated=$state(false),password=$state(''),draftAnswers=$state<(Choice|null)[]>([]),keyDirty=$state(false);
+ let events=$state<QuizEvent[]>([]),title=$state('みんなで ○×クイズ'),questionCount=$state(10),quiz=$state<HostState|null>(null),tab=$state<'live'|'qr'>('live'),error=$state(''),notice=$state(''),busy=$state(false),qr=$state(''),confirmClose=$state(false),deleteTarget=$state<QuizEvent|null>(null),polling=false,authenticated=$state(false),password=$state(''),draftAnswers=$state<(Choice|null)[]>([]),keyDirty=$state(false);
  const invite=$derived(typeof location!=='undefined'?`${location.origin}${appBase}?e=${id}`:'');
  let closeDialog=$state<HTMLDialogElement>();
+ let deleteDialog=$state<HTMLDialogElement>();
  $effect(()=>{if(confirmClose)closeDialog?.showModal();else closeDialog?.close()});
+ $effect(()=>{if(deleteTarget&&!deleteDialog?.open)deleteDialog?.showModal();else if(!deleteTarget&&deleteDialog?.open)deleteDialog.close()});
  const labels:Record<string,string>={setup:'開始前',open:'回答受付中',closed:'回答締め切り',finished:'終了'};
  async function refresh(){if(polling)return;polling=true;try{if(id){quiz=await request<HostState>(`/api/events/${id}/host`);if(quiz.event.phase==='setup'&&!keyDirty)draftAnswers=quiz.questions.map(q=>q.correctChoice??null);}else events=await request<QuizEvent[]>('/api/events');authenticated=true;error=''}catch(e){authenticated=false;error=message(e)}finally{polling=false}}
  async function login(){busy=true;error='';sessionStorage.setItem(hostPasswordKey,password);await refresh();if(!authenticated)sessionStorage.removeItem(hostPasswordKey);password='';busy=false}
  async function create(){busy=true;error='';try{const event=await request<{id:string}>('/api/events',{title,questionCount});location.href=hostHome+'&e='+event.id}catch(e){error=message(e)}finally{busy=false}}
+ async function deleteEvent(){const target=deleteTarget;if(!target||busy)return;busy=true;error='';notice='';try{await request(`/api/events/${target.id}/delete`,{});events=events.filter(event=>event.id!==target.id);deleteTarget=null;notice=`「${target.title}」を削除しました。`}catch(e){error=message(e)}finally{busy=false}}
  async function saveKey(){if(!quiz||draftAnswers.some(choice=>!choice))return;busy=true;error='';notice='';try{await request(`/api/events/${id}/key`,{choices:draftAnswers});keyDirty=false;await refresh();notice='正解を保存しました。'}catch(e){error=message(e)}finally{busy=false}}
  async function control(command:string){if(!quiz)return;busy=true;error='';notice='';confirmClose=false;try{await request(`/api/events/${id}/control`,{command,current:quiz.event.current});await refresh();tab='live'}catch(e){error=message(e);await refresh()}finally{busy=false}}
  function rankAt(index:number){if(!quiz)return index+1;const score=quiz.groups[index]?.correctCount;return quiz.groups.findIndex(group=>group.correctCount===score)+1}
@@ -27,7 +30,7 @@
   <section class="card login-card"><h1>司会者用パスワード</h1><form onsubmit={(e)=>{e.preventDefault();void login()}}><label for="host-password">パスワード</label><input id="host-password" type="password" bind:value={password} autocomplete="current-password" required/><button class="primary" disabled={busy||!password}>{busy?'確認中…':'司会者ページに入る'} <span>→</span></button></form></section>
  {:else if !id}
   <div class="host-home-grid"><section class="card"><div class="section-kicker">新しいイベント</div><h2>イベントを作成する</h2><form onsubmit={(e)=>{e.preventDefault();void create()}}><label for="event-title">イベント名</label><input id="event-title" bind:value={title} maxlength="80" required/><label for="question-count">問題数</label><select id="question-count" bind:value={questionCount}>{#each Array.from({length:30},(_,i)=>i+1) as count}<option value={count}>{count}問</option>{/each}</select><button class="primary" disabled={busy||!title.trim()}>{busy?'作成中…':'イベントを作成'} <span>→</span></button></form></section>
-  <section class="card"><div class="section-kicker">作成済みのイベント</div><h2>イベントを開く</h2>{#if events.length===0}<div class="empty-state">まだイベントはありません。<br/>左のフォームから作成してください。</div>{:else}<div class="event-list">{#each events as event}<a href={hostHome+'&e='+event.id}><strong>{event.title}</strong><span>{labels[event.phase]}　→</span></a>{/each}</div>{/if}</section></div>
+  <section class="card"><div class="section-kicker">作成済みのイベント</div><h2>イベントを開く</h2>{#if events.length===0}<div class="empty-state">まだイベントはありません。<br/>左のフォームから作成してください。</div>{:else}<div class="event-list">{#each events as event (event.id)}<div class="event-row"><a href={hostHome+'&e='+event.id}><strong>{event.title}</strong><span>{labels[event.phase]}　→</span></a><button class="event-delete" type="button" aria-label={`「${event.title}」を削除`} disabled={busy} onclick={()=>deleteTarget=event}>削除</button></div>{/each}</div>{/if}</section></div>
  {:else if quiz}
   <div class="page-heading"><div><div class="eyebrow">HOST CONSOLE</div><h1>{quiz.event.title}</h1></div><span class="pill phase" class:is-open={quiz.event.phase==='open'}>{labels[quiz.event.phase]}</span></div>
   <nav class="tabs" aria-label="イベント管理"><button class:active={tab==='live'} onclick={()=>tab='live'}>進行と集計</button><button class:active={tab==='qr'} onclick={()=>tab='qr'}>参加用QRコード</button></nav>
@@ -49,3 +52,4 @@
  {/if}
 </main>
 <dialog bind:this={closeDialog} class="modal card" aria-labelledby="close-heading" oncancel={()=>confirmClose=false}>{#if quiz}<h2 id="close-heading">回答を締め切りますか？</h2><p>未回答のグループは <strong>{quiz.totals.pending}組</strong> です。<br/>締め切り後は回答を受け付けません。</p><div class="button-row"><button class="secondary" onclick={()=>confirmClose=false}>戻る</button><button class="danger" onclick={()=>control('close')}>締め切る</button></div>{/if}</dialog>
+<dialog bind:this={deleteDialog} class="modal card" aria-labelledby="delete-heading" oncancel={()=>deleteTarget=null}>{#if deleteTarget}<h2 id="delete-heading">「{deleteTarget.title}」を削除しますか？</h2><p>参加グループ、回答、正解の設定も削除されます。この操作は取り消せません。</p><div class="button-row"><button class="secondary" disabled={busy} onclick={()=>deleteTarget=null}>戻る</button><button class="danger" disabled={busy} onclick={deleteEvent}>{busy?'削除中…':'削除する'}</button></div>{/if}</dialog>

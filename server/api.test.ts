@@ -45,6 +45,22 @@ test('host password works across browsers and protects event operations', async 
   assert.equal(publicState.body.event.owner, undefined);
 });
 
+test('host can delete one event without removing another event', async () => {
+  const {call,p,hostCookie}=await setup(2);
+  const participant=await call(p+'/join',{name:'削除対象チーム'});
+  assert.equal((await call(p+'/control',{command:'start',current:0},undefined,hostCookie)).status,200);
+  assert.equal((await call(p+'/answer',{number:1,choice:'x'},undefined,participant.cookie)).status,200);
+  const other=await call('/events',{title:'残すイベント',questionCount:1},undefined,hostCookie);
+  assert.equal((await call(p+'/delete',{})).status,401);
+  assert.equal((await call(p+'/delete',{},undefined,'wrong')).status,401);
+  assert.equal((await call(p+'/delete',{},undefined,hostCookie)).status,200);
+  assert.equal((await call(p+'/state')).status,404);
+  assert.equal((await call(p+'/host',undefined,undefined,hostCookie)).status,404);
+  assert.equal((await call(p+'/delete',{},undefined,hostCookie)).status,404);
+  assert.deepEqual((await call('/events',undefined,undefined,hostCookie)).body.map((event:{id:string})=>event.id),[other.body.id]);
+  assert.equal((await call(`/events/${other.body.id}/state`)).status,200);
+});
+
 test('GitHub Pages origin can use password authentication through CORS', async () => {
   const DB = localDatabase(true), origin = 'https://nyancatnyo.github.io';
   const preflight = await api(new Request('https://quiz.test/api/events', { method: 'OPTIONS', headers: { origin, 'access-control-request-method': 'POST' } }), { DB });
