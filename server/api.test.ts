@@ -8,53 +8,55 @@ function fixture() {
   return async (path: string, data?: unknown, user?: string, cookie?: string) => {
     const headers: Record<string, string> = {};
     if (user) headers['oai-authenticated-user-id'] = user;
-    if (cookie) headers.cookie = cookie;
+    if (cookie) { if (cookie.startsWith('mq_')) headers.cookie = cookie; else headers['x-quiz-host-password'] = cookie; }
     const response = await api(new Request(`https://quiz.test/api${path}`, {
       method: data === undefined ? 'GET' : 'POST', headers,
       body: data === undefined ? undefined : JSON.stringify(data),
-    }), { DB });
+    }), { DB, HOST_PASSWORD: '1234' });
     return { status: response.status, body: await response.json() as any, cookie: response.headers.get('set-cookie')?.split(';')[0] };
   };
 }
 
 async function setup() {
   const call = fixture();
-  const made = await call('/events', { title: '検証イベント' });
+  const made = await call('/events', { title: '検証イベント' }, undefined, '1234');
   assert.equal(made.status, 201);
-  assert.ok(made.cookie);
   const id = made.body.id;
-  return { call, id, p: `/events/${id}`, hostCookie: made.cookie! };
+  return { call, id, p: `/events/${id}`, hostCookie: '1234' };
 }
 
-test('event creation is anonymous and host access is protected by its cookie', async () => {
+test('host password works across browsers and protects event operations', async () => {
   const { call, p, hostCookie } = await setup();
-  assert.equal((await call(p + '/host')).status, 403);
-  assert.equal((await call(p + '/host', undefined, 'unrelated-user')).status, 403);
-  assert.equal((await call(p + '/host', undefined, undefined, 'hq_fake=fake')).status, 403);
+  assert.equal((await call(p + '/host')).status, 401);
+  assert.equal((await call(p + '/host', undefined, 'unrelated-user')).status, 401);
+  assert.equal((await call(p + '/host', undefined, undefined, 'wrong')).status, 401);
   assert.equal((await call(p + '/host', undefined, undefined, hostCookie)).status, 200);
-  assert.equal((await call(p + '/control', { command: 'start', current: 0 })).status, 403);
+  assert.equal((await call(p + '/control', { command: 'start', current: 0 })).status, 401);
   assert.equal((await call('/events', undefined, undefined, hostCookie)).body.length, 1);
-  assert.equal((await call('/events')).body.length, 0);
+  assert.equal((await call('/events')).status, 401);
+  const second = await call('/events', { title: '別端末のイベント' }, undefined, hostCookie);
+  assert.equal(second.status, 201);
+  assert.equal((await call('/events', undefined, undefined, hostCookie)).body.length, 2);
   const publicState = await call(p + '/state');
   assert.deepEqual(Object.keys(publicState.body).sort(), ['answer', 'event', 'group', 'question']);
   assert.equal(publicState.body.event.owner, undefined);
 });
 
-test('GitHub Pages origin can use token authentication through CORS', async () => {
+test('GitHub Pages origin can use password authentication through CORS', async () => {
   const DB = localDatabase(true), origin = 'https://nyancatnyo.github.io';
   const preflight = await api(new Request('https://quiz.test/api/events', { method: 'OPTIONS', headers: { origin, 'access-control-request-method': 'POST' } }), { DB });
   assert.equal(preflight.status, 204);
   assert.equal(preflight.headers.get('access-control-allow-origin'), origin);
-  const created = await api(new Request('https://quiz.test/api/events', { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Pagesイベント' }) }), { DB });
+  const created = await api(new Request('https://quiz.test/api/events', { method: 'POST', headers: { origin, 'content-type': 'application/json', 'x-quiz-host-password': '1234' }, body: JSON.stringify({ title: 'Pagesイベント' }) }), { DB, HOST_PASSWORD: '1234' });
   const event = await created.json() as any;
-  assert.ok(event.hostToken);
-  const host = await api(new Request(`https://quiz.test/api/events/${event.id}/host`, { headers: { origin, 'x-quiz-host-token': event.hostToken } }), { DB });
+  assert.equal(event.hostToken, undefined);
+  const host = await api(new Request(`https://quiz.test/api/events/${event.id}/host`, { headers: { origin, 'x-quiz-host-password': '1234' } }), { DB, HOST_PASSWORD: '1234' });
   assert.equal(host.status, 200);
   assert.equal(host.headers.get('access-control-allow-origin'), origin);
-  const joined = await api(new Request(`https://quiz.test/api/events/${event.id}/join`, { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify({ name: '追手門チーム' }) }), { DB });
+  const joined = await api(new Request(`https://quiz.test/api/events/${event.id}/join`, { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify({ name: '追手門チーム' }) }), { DB, HOST_PASSWORD: '1234' });
   const participant = await joined.json() as any;
   assert.ok(participant.groupToken);
-  const state = await api(new Request(`https://quiz.test/api/events/${event.id}/state`, { headers: { origin, 'x-quiz-group-token': participant.groupToken } }), { DB });
+  const state = await api(new Request(`https://quiz.test/api/events/${event.id}/state`, { headers: { origin, 'x-quiz-group-token': participant.groupToken } }), { DB, HOST_PASSWORD: '1234' });
   assert.equal((await state.json() as any).group.name, '追手門チーム');
 });
 
@@ -101,8 +103,8 @@ test('ten questions, immutable answers, retries, closure, next question and fini
 test('participant credentials cannot control another event', async () => {
   const { call, p } = await setup();
   const participant = await call(p + '/join', { name: 'A' });
-  const other = await call('/events', { title: '他のイベント' });
-  assert.equal((await call(`/events/${other.body.id}/host`, undefined, undefined, participant.cookie)).status, 403);
+  const other = await call('/events', { title: '他のイベント' }, undefined, '1234');
+  assert.equal((await call(`/events/${other.body.id}/host`, undefined, undefined, participant.cookie)).status, 401);
 });
 
 test('final scores remain host-only and use x x x x o o x x o x', async () => {
