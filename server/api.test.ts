@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { api } from './api';
 import { localDatabase } from './local-db';
+import Sqlite from 'better-sqlite3';
+import { readFileSync } from 'node:fs';
 
 function fixture() {
   const DB = localDatabase(true);
@@ -17,11 +19,12 @@ function fixture() {
   };
 }
 
-async function setup() {
+async function setup(questionCount=10, configure=true) {
   const call = fixture();
-  const made = await call('/events', { title: '検証イベント' }, undefined, '1234');
+  const made = await call('/events', { title: '検証イベント', questionCount }, undefined, '1234');
   assert.equal(made.status, 201);
   const id = made.body.id;
+  if(configure){const choices=Array.from({length:questionCount},(_,i)=>[5,6,9].includes(i+1)?'o':'x');assert.equal((await call(`/events/${id}/key`,{choices},undefined,'1234')).status,200)}
   return { call, id, p: `/events/${id}`, hostCookie: '1234' };
 }
 
@@ -34,7 +37,7 @@ test('host password works across browsers and protects event operations', async 
   assert.equal((await call(p + '/control', { command: 'start', current: 0 })).status, 401);
   assert.equal((await call('/events', undefined, undefined, hostCookie)).body.length, 1);
   assert.equal((await call('/events')).status, 401);
-  const second = await call('/events', { title: '別端末のイベント' }, undefined, hostCookie);
+  const second = await call('/events', { title: '別端末のイベント', questionCount: 3 }, undefined, hostCookie);
   assert.equal(second.status, 201);
   assert.equal((await call('/events', undefined, undefined, hostCookie)).body.length, 2);
   const publicState = await call(p + '/state');
@@ -47,7 +50,7 @@ test('GitHub Pages origin can use password authentication through CORS', async (
   const preflight = await api(new Request('https://quiz.test/api/events', { method: 'OPTIONS', headers: { origin, 'access-control-request-method': 'POST' } }), { DB });
   assert.equal(preflight.status, 204);
   assert.equal(preflight.headers.get('access-control-allow-origin'), origin);
-  const created = await api(new Request('https://quiz.test/api/events', { method: 'POST', headers: { origin, 'content-type': 'application/json', 'x-quiz-host-password': '1234' }, body: JSON.stringify({ title: 'Pagesイベント' }) }), { DB, HOST_PASSWORD: '1234' });
+  const created = await api(new Request('https://quiz.test/api/events', { method: 'POST', headers: { origin, 'content-type': 'application/json', 'x-quiz-host-password': '1234' }, body: JSON.stringify({ title: 'Pagesイベント', questionCount: 3 }) }), { DB, HOST_PASSWORD: '1234' });
   const event = await created.json() as any;
   assert.equal(event.hostToken, undefined);
   const host = await api(new Request(`https://quiz.test/api/events/${event.id}/host`, { headers: { origin, 'x-quiz-host-password': '1234' } }), { DB, HOST_PASSWORD: '1234' });
@@ -103,8 +106,40 @@ test('ten questions, immutable answers, retries, closure, next question and fini
 test('participant credentials cannot control another event', async () => {
   const { call, p } = await setup();
   const participant = await call(p + '/join', { name: 'A' });
-  const other = await call('/events', { title: '他のイベント' }, undefined, '1234');
+  const other = await call('/events', { title: '他のイベント', questionCount: 10 }, undefined, '1234');
   assert.equal((await call(`/events/${other.body.id}/host`, undefined, undefined, participant.cookie)).status, 401);
+});
+
+test('selected question count and saved answer key control progression and scoring', async () => {
+  const {call,p,hostCookie}=await setup(3,false);
+  const participant=await call(p+'/join',{name:'3問チーム'});
+  assert.equal((await call(p+'/state')).body.event.questionCount,3);
+  assert.equal((await call(p+'/host',undefined,undefined,hostCookie)).body.questions.length,3);
+  assert.equal((await call(p+'/control',{command:'start',current:0},undefined,hostCookie)).status,409);
+  assert.equal((await call(p+'/key',{choices:['o','x']},undefined,hostCookie)).status,400);
+  assert.equal((await call(p+'/key',{choices:['o','x','o']},undefined,hostCookie)).status,200);
+  assert.equal((await call(p+'/control',{command:'start',current:0},undefined,hostCookie)).status,200);
+  assert.equal((await call(p+'/key',{choices:['x','x','x']},undefined,hostCookie)).status,409);
+  for(let number=1;number<=3;number++){
+    assert.equal((await call(p+'/answer',{number,choice:['o','x','o'][number-1]},undefined,participant.cookie)).status,200);
+    assert.equal((await call(p+'/control',{command:'close',current:number},undefined,hostCookie)).status,200);
+    if(number<3)assert.equal((await call(p+'/control',{command:'next',current:number},undefined,hostCookie)).status,200);
+  }
+  assert.equal((await call(p+'/control',{command:'next',current:3},undefined,hostCookie)).status,409);
+  assert.equal((await call(p+'/control',{command:'finish',current:3},undefined,hostCookie)).status,200);
+  assert.equal((await call(p+'/host',undefined,undefined,hostCookie)).body.groups[0].correctCount,3);
+  assert.equal((await call(p+'/state',undefined,undefined,participant.cookie)).body.question.correctChoice,undefined);
+});
+
+test('existing ten-question events retain their answer key after migration', () => {
+  const db=new Sqlite(':memory:');
+  db.exec(readFileSync('drizzle/0000_lush_bloodscream.sql','utf8'));
+  db.prepare("INSERT INTO events (id,owner,title,phase,current,created) VALUES ('old','password','以前のイベント','finished',10,1)").run();
+  for(let number=1;number<=10;number++)db.prepare("INSERT INTO questions (event_id,number,category,body) VALUES ('old',?,'','')").run(number);
+  db.exec(readFileSync('drizzle/0001_equal_gateway.sql','utf8'));
+  assert.equal((db.prepare("SELECT question_count FROM events WHERE id='old'").get() as {question_count:number}).question_count,10);
+  assert.deepEqual(db.prepare("SELECT correct_choice FROM questions WHERE event_id='old' ORDER BY number").all().map((row:any)=>row.correct_choice),['x','x','x','x','o','o','x','x','o','x']);
+  db.close();
 });
 
 test('final scores remain host-only and use x x x x o o x x o x', async () => {

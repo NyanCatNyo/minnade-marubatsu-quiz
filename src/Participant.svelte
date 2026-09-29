@@ -23,9 +23,9 @@
    {#if quiz.event.phase==='setup'}
     <section class="card waiting"><div class="waiting-symbol" aria-hidden="true">○ ×</div><span class="pill">登録完了</span><h2>みんなの準備を待っています</h2><p>司会者がクイズを開始すると、<br/>ここに第1問が表示されます。</p><div class="notice">この画面を開いたままお待ちください。</div></section>
    {:else if quiz.event.phase==='finished'}
-    <section class="card waiting"><div class="waiting-symbol" aria-hidden="true">○ ×</div><span class="pill">10 / 10 問</span><h2>ご参加ありがとうございました！</h2><p>すべてのクイズが終了しました。<br/>最後まで、みんなで考えてくれてありがとう。</p></section>
+    <section class="card waiting"><div class="waiting-symbol" aria-hidden="true">○ ×</div><span class="pill">{quiz.event.questionCount} / {quiz.event.questionCount} 問</span><h2>ご参加ありがとうございました！</h2><p>すべてのクイズが終了しました。<br/>最後まで、みんなで考えてくれてありがとう。</p></section>
    {:else}
-    <div class="question-progress" aria-label={`全10問中${quiz.event.current}問目`}>{#each Array(10) as _,i}<span class:active={i+1===quiz.event.current} class:done={i+1<quiz.event.current}></span>{/each}</div>
+    <div class="question-progress" aria-label={`全${quiz.event.questionCount}問中${quiz.event.current}問目`}>{#each Array(quiz.event.questionCount) as _,i}<span class:active={i+1===quiz.event.current} class:done={i+1<quiz.event.current}></span>{/each}</div>
     <section class="card question-card"><h2 class="question-body">第{quiz.event.current}問</h2>
      {#if quiz.answer}
       <div class="answer-confirmed" class:answer-x={quiz.answer==='x'}><div class="big-answer" aria-label={quiz.answer==='o'?'まる':'ばつ'}>{quiz.answer==='o'?'○':'×'}</div><strong>この回答で決定しました</strong><p>司会者の合図に合わせて、<br/>グループの「{quiz.answer==='o'?'○':'×'}」の札を上げてください。</p><span class="lock-note">決定済みの回答は変更できません</span></div>
