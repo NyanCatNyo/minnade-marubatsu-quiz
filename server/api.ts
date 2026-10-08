@@ -47,7 +47,7 @@ async function handleApi(req:Request,env:Env):Promise<Response>{
   }
   if(action==='state'&&method==='GET'){
    const group=await groupFor(req,db,id);
-   const question=ev.current?await db.prepare('SELECT number FROM questions WHERE event_id = ? AND number = ?').bind(id,ev.current).first():null;
+   const question=ev.current===0?(ev.phase==='open'||ev.phase==='closed'?{number:0}:null):await db.prepare('SELECT number FROM questions WHERE event_id = ? AND number = ?').bind(id,ev.current).first();
    const answer=group?await db.prepare('SELECT choice FROM answers WHERE group_id = ? AND number = ?').bind(group.id,ev.current).first<{choice:string}>():null;
    return json({event:publicEvent(ev),question,group,answer:answer?.choice??null});
   }
@@ -61,7 +61,7 @@ async function handleApi(req:Request,env:Env):Promise<Response>{
   }
   if(action==='answer'&&method==='POST'){
    const group=await groupFor(req,db,id);if(!group)fail(401,'グループを登録してください。');
-   const {number,choice}=await body(req);if(!Number.isInteger(number)||number<1||number>ev.question_count||!['o','x'].includes(choice))fail(400,'回答を選んでください。');
+   const {number,choice}=await body(req);if(!Number.isInteger(number)||number<0||number>ev.question_count||!['o','x'].includes(choice))fail(400,'回答を選んでください。');if(number!==ev.current)fail(409,'現在の問題を確認してください。');
    await db.prepare('INSERT INTO answers (group_id,number,choice,created) SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM events WHERE id = ? AND phase = \'open\' AND current = ?) ON CONFLICT(group_id,number) DO NOTHING').bind(group!.id,number,choice,Date.now(),id,number).run();
    const saved=await db.prepare('SELECT choice FROM answers WHERE group_id = ? AND number = ?').bind(group!.id,number).first<{choice:string}>();
    if(!saved)fail(409,'回答は締め切られました。');if(saved!.choice!==choice)fail(409,'すでに決定済みです。回答は変更できません。');return json({choice:saved!.choice});
@@ -72,7 +72,7 @@ async function handleApi(req:Request,env:Env):Promise<Response>{
    const scores=new Map<string,number>();
    if(ev.phase==='finished'){
     const submitted=(await db.prepare('SELECT a.group_id,a.number,a.choice FROM answers a JOIN groups g ON g.id = a.group_id WHERE g.event_id = ?').bind(id).all<{group_id:string;number:number;choice:string}>()).results;
-    for(const answer of submitted)if(questions[answer.number-1]?.correctChoice===answer.choice)scores.set(answer.group_id,(scores.get(answer.group_id)??0)+1);
+    for(const answer of submitted)if(answer.number>0&&questions[answer.number-1]?.correctChoice===answer.choice)scores.set(answer.group_id,(scores.get(answer.group_id)??0)+1);
    }
    const scoredGroups=groups.map(group=>({...group,correctCount:ev.phase==='finished'?(scores.get(group.id)??0):null}));
    if(ev.phase==='finished')scoredGroups.sort((a,b)=>(b.correctCount??0)-(a.correctCount??0)||a.name.localeCompare(b.name,'ja'));
@@ -90,10 +90,14 @@ async function handleApi(req:Request,env:Env):Promise<Response>{
   if(action==='control'&&method==='POST'){
    const {command,current}=await body(req);if(current!==ev.current)fail(409,'進行状況が変わりました。画面を更新してください。');
    let sql='',values:unknown[]=[];
-   if(command==='start'){
+   if(command==='sample'){
     const missing=await db.prepare("SELECT COUNT(*) AS count FROM questions WHERE event_id = ? AND (correct_choice IS NULL OR correct_choice NOT IN ('o','x'))").bind(id).first<{count:number}>();
     if(missing?.count)fail(409,'開始前に全問の正解を保存してください。');
-    sql="UPDATE events SET phase = 'open', current = 1 WHERE id = ? AND phase = 'setup'";values=[id];
+    sql="UPDATE events SET phase = 'open' WHERE id = ? AND phase = 'setup' AND current = 0";values=[id];
+   }else if(command==='start'){
+    const missing=await db.prepare("SELECT COUNT(*) AS count FROM questions WHERE event_id = ? AND (correct_choice IS NULL OR correct_choice NOT IN ('o','x'))").bind(id).first<{count:number}>();
+    if(missing?.count)fail(409,'開始前に全問の正解を保存してください。');
+    sql="UPDATE events SET phase = 'open', current = 1 WHERE id = ? AND current = 0 AND phase IN ('setup','closed')";values=[id];
    }else if(command==='close'){sql="UPDATE events SET phase = 'closed' WHERE id = ? AND phase = 'open' AND current = ?";values=[id,current];}
    else if(command==='next'){sql="UPDATE events SET phase = 'open', current = current + 1 WHERE id = ? AND phase = 'closed' AND current = ? AND current < question_count";values=[id,current];}
    else if(command==='finish'){sql="UPDATE events SET phase = 'finished' WHERE id = ? AND phase = 'closed' AND current = question_count";values=[id];}

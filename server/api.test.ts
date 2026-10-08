@@ -147,6 +147,29 @@ test('selected question count and saved answer key control progression and scori
   assert.equal((await call(p+'/state',undefined,undefined,participant.cookie)).body.question.correctChoice,undefined);
 });
 
+test('optional example question accepts answers before question one and does not affect scores', async () => {
+  const {call,p,hostCookie}=await setup(2);
+  const team=await call(p+'/join',{name:'例題チーム'});
+  assert.equal((await call(p+'/control',{command:'sample',current:0},undefined,hostCookie)).status,200);
+  const example=(await call(p+'/state',undefined,undefined,team.cookie)).body;
+  assert.equal(example.question.number,0);
+  assert.equal(example.event.questionCount,2);
+  assert.equal((await call(p+'/answer',{number:0,choice:'o'},undefined,team.cookie)).status,200);
+  assert.equal((await call(p+'/answer',{number:0,choice:'x'},undefined,team.cookie)).status,409);
+  assert.equal((await call(p+'/control',{command:'close',current:0},undefined,hostCookie)).status,200);
+  assert.equal((await call(p+'/answer',{number:0,choice:'o'},undefined,team.cookie)).status,200);
+  assert.equal((await call(p+'/control',{command:'start',current:0},undefined,hostCookie)).status,200);
+  assert.equal((await call(p+'/state',undefined,undefined,team.cookie)).body.answer,null);
+  assert.equal((await call(p+'/answer',{number:0,choice:'o'},undefined,team.cookie)).status,409);
+  assert.equal((await call(p+'/answer',{number:1,choice:'o'},undefined,team.cookie)).status,200);
+  assert.equal((await call(p+'/control',{command:'close',current:1},undefined,hostCookie)).status,200);
+  assert.equal((await call(p+'/control',{command:'next',current:1},undefined,hostCookie)).status,200);
+  assert.equal((await call(p+'/answer',{number:2,choice:'x'},undefined,team.cookie)).status,200);
+  assert.equal((await call(p+'/control',{command:'close',current:2},undefined,hostCookie)).status,200);
+  assert.equal((await call(p+'/control',{command:'finish',current:2},undefined,hostCookie)).status,200);
+  assert.equal((await call(p+'/host',undefined,undefined,hostCookie)).body.groups[0].correctCount,1);
+});
+
 test('existing ten-question events retain their answer key after migration', () => {
   const db=new Sqlite(':memory:');
   db.exec(readFileSync('drizzle/0000_lush_bloodscream.sql','utf8'));
