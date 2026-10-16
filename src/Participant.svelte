@@ -15,7 +15,7 @@
  {:else}
   {#if !quiz.group}
    <section class="card registration"><h2>グループ名を教えてください</h2><p class="muted">代表者1名が登録してください。<br/>この端末でグループの回答を送信します。</p>
-    {#if quiz.event.phase==='finished'}<div class="notice">このイベントは終了しました。</div>{:else}<form onsubmit={(e)=>{e.preventDefault();void join()}}><label for="group-name">グループ名</label><input id="group-name" bind:value={name} maxlength="30" placeholder="例：追手門チーム" autocomplete="organization" required disabled={busy}/><p class="note">会場で分かる名前を入力してください（30文字以内）。</p>{#if error}<p class="error" role="alert">{error}</p>{/if}<button class="primary" disabled={busy||!name.trim()}>{busy?'登録中…':'このグループで参加する'} <span>→</span></button></form>{/if}
+    {#if quiz.event.phase==='finished'}<div class="notice">このイベントは終了しました。</div>{:else}<form onsubmit={(e)=>{e.preventDefault();void join()}}><label for="group-name">グループ名</label><input id="group-name" bind:value={name} maxlength="30" placeholder="例：追手門グループ" autocomplete="organization" required disabled={busy}/><p class="note">会場で分かる名前を入力してください（30文字以内）。</p>{#if error}<p class="error" role="alert">{error}</p>{/if}<button class="primary" disabled={busy||!name.trim()}>{busy?'登録中…':'このグループで参加する'} <span>→</span></button></form>{/if}
    </section>
   {:else}
    <div class="group-banner"><span>参加グループ</span><strong>{quiz.group.name}</strong><span class="connected">自動更新</span></div>
